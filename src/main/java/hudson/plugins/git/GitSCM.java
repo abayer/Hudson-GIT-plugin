@@ -183,6 +183,11 @@ public class GitSCM extends SCM implements Serializable {
         buildChooser.gitSCM = this; // set the owner
     }
 
+    @Override
+    public boolean requiresWorkspaceForPolling() {
+    	return false;
+    }
+
     public Object readResolve()  {
         // Migrate data
 
@@ -377,7 +382,7 @@ public class GitSCM extends SCM implements Serializable {
     @Override
     public SCMRevisionState calcRevisionsFromBuild(AbstractBuild<?, ?> build, Launcher launcher, TaskListener listener)
             throws IOException, InterruptedException {
-        final BuildData buildData = getBuildData(build.getPreviousBuild(), true);
+        final BuildData buildData = getBuildData(build, true);
         final ObjectId o;
         if (buildData != null) {
             Revision r = buildData.getLastBuiltRevision();
@@ -436,6 +441,13 @@ public class GitSCM extends SCM implements Serializable {
             gitExe = getGitExe(project.getLastBuiltOn(), listener);
         }
 
+        if (workspace == null) {
+            workspace = lastBuild.getWorkspace();
+        }
+        if (launcher == null) {
+            launcher = workspace.createLauncher(listener);
+        }
+        
         FilePath workingDirectory = workingDirectory(workspace);
 
         // Rebuild if the working directory doesn't exist
