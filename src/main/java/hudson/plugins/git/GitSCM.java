@@ -427,41 +427,38 @@ public class GitSCM extends SCM implements Serializable {
 
         final EnvVars environment = GitUtils.getPollEnvironment(project, workspace, launcher, listener);
        
-        boolean pollChangesResult = workingDirectory.act(new FileCallable<Boolean>() {
-                private static final long serialVersionUID = 1L;
-                public Boolean invoke(File localWorkspace, VirtualChannel channel) throws IOException {
-                    IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener, environment);
+        boolean pollChangesResult;
 
-                    if (git.hasGitRepo()) {
-                        // Repo is there - do a fetch
-                        listener.getLogger().println("Fetching changes from the remote Git repositories");
-
-                        // Fetch updates
-                        for (RemoteConfig remoteRepository : paramRepos) {
-                            fetchFrom(git, localWorkspace, listener, remoteRepository);
-                        }
-
-                        listener.getLogger().println("Polling for changes in");
-
-                        Collection<Revision> origCandidates = buildChooser.getCandidateRevisions(
-                                true, singleBranch, git, listener, buildData);
-
-                        List<Revision> candidates = new ArrayList<Revision>();
-                        
-                        for (Revision c : origCandidates) {
-                            if (!isRevExcluded(git, c, listener)) {
-                                candidates.add(c);
-                            }
-                        }
-                        
-                        return (candidates.size() > 0);
-                    } else {
-                        listener.getLogger().println("No Git repository yet, an initial checkout is required");
-                        return true;
-                    }
+        IGitAPI git = new GitAPI(gitExe, workingDirectory, listener, environment);
+        
+        if (git.hasGitRepo()) {
+            // Repo is there - do a fetch
+            listener.getLogger().println("Fetching changes from the remote Git repositories");
+            
+            // Fetch updates
+            for (RemoteConfig remoteRepository : paramRepos) {
+                fetchFrom(git, workingDirectory, listener, remoteRepository);
+            }
+            
+            listener.getLogger().println("Polling for changes in");
+            
+            Collection<Revision> origCandidates = buildChooser.getCandidateRevisions(
+                                                                                     true, singleBranch, git, listener, buildData);
+            
+            List<Revision> candidates = new ArrayList<Revision>();
+            
+            for (Revision c : origCandidates) {
+                if (!isRevExcluded(git, c, listener)) {
+                    candidates.add(c);
                 }
-            });
-
+            }
+            
+            pollChangesResult = (candidates.size() > 0);
+        } else {
+            listener.getLogger().println("No Git repository yet, an initial checkout is required");
+            pollChangesResult = true;
+        }
+        
         return pollChangesResult;
     }
 
@@ -472,7 +469,7 @@ public class GitSCM extends SCM implements Serializable {
 
     
     private void cleanSubmodules(IGitAPI parentGit,
-                                 File workspace,
+                                 FilePath workspace,
                                  TaskListener listener,
                                  RemoteConfig remoteRepository) {
         
@@ -482,9 +479,9 @@ public class GitSCM extends SCM implements Serializable {
         for (IndexEntry submodule : submodules) {
             try {
                 RemoteConfig submoduleRemoteRepository = getSubmoduleRepository(workspace, remoteRepository, submodule.getFile());
-                File subdir = new File(workspace, submodule.getFile());
+                FilePath subdir = workspace.child(submodule.getFile());
                 listener.getLogger().println("Trying to clean submodule in " + subdir);
-                IGitAPI subGit = new GitAPI(parentGit.getGitExe(), new FilePath(subdir),
+                IGitAPI subGit = new GitAPI(parentGit.getGitExe(), subdir,
                                             listener, parentGit.getEnvironment());
                 
                 subGit.clean();
@@ -510,7 +507,7 @@ public class GitSCM extends SCM implements Serializable {
      * @return true if fetch goes through, false otherwise.
      * @throws
      */
-    private boolean fetchFrom(IGitAPI git, File workspace, TaskListener listener,
+    private boolean fetchFrom(IGitAPI git, FilePath workspace, TaskListener listener,
                               RemoteConfig remoteRepository) {
         boolean fetched = true;
         
@@ -523,9 +520,9 @@ public class GitSCM extends SCM implements Serializable {
             for (IndexEntry submodule : submodules) {
                 try {
                     RemoteConfig submoduleRemoteRepository = getSubmoduleRepository(workspace, remoteRepository, submodule.getFile());
-                    File subdir = new File(workspace, submodule.getFile());
+                    FilePath subdir = workspace.child(submodule.getFile());
                     listener.getLogger().println("Trying to fetch " + submodule.getFile() + " into " + subdir);
-                    IGitAPI subGit = new GitAPI(git.getGitExe(), new FilePath(subdir),
+                    IGitAPI subGit = new GitAPI(git.getGitExe(), subdir,
                                                 listener, git.getEnvironment());
 
                     subGit.fetch(submoduleRemoteRepository);
@@ -550,9 +547,9 @@ public class GitSCM extends SCM implements Serializable {
         return fetched;
     }
 
-    public RemoteConfig getSubmoduleRepository(File aWorkspace, RemoteConfig orig, String name) throws IOException {
+    public RemoteConfig getSubmoduleRepository(FilePath aWorkspace, RemoteConfig orig, String name) throws IOException {
         // Read submodule from .gitmodules
-        BufferedReader bfr = new BufferedReader(new FileReader(aWorkspace + File.separator + ".gitmodules"));
+        BufferedReader bfr = new BufferedReader(new InputStreamReader(aWorkspace.child(".gitmodules").read());
         String line = "";
         boolean isSubmodule = false;
 
@@ -715,117 +712,110 @@ public class GitSCM extends SCM implements Serializable {
         
         final Revision parentLastBuiltRev = tempParentLastBuiltRev;
         
-        final Revision revToBuild = workingDirectory.act(new FileCallable<Revision>() {
-                private static final long serialVersionUID = 1L;
-                public Revision invoke(File localWorkspace, VirtualChannel channel)
-                throws IOException {
-                    FilePath ws = new FilePath(localWorkspace);
-                    listener.getLogger().println("Checkout:" + ws.getName() + " / " + ws.getRemote() + " - " + ws.getChannel());
-                    IGitAPI git = new GitAPI(gitExe, ws, listener, environment);
-
-                    if (wipeOutWorkspace) {
-                        listener.getLogger().println("Wiping out workspace first");
-                        try {
-                            ws.deleteContents();
-                        } catch (InterruptedException e) {
-                            // I don't really care if this fails.
-                        } 
-                        
-                    }
-
-                    if (git.hasGitRepo()) {
-                        // It's an update
-
-                        // Do we want to prune first?
-                        if (pruneBranches) {
-                            listener.getLogger().println("Pruning obsolete local branches");
-                            for (RemoteConfig remoteRepository : paramRepos) {
-                                git.prune(remoteRepository);
-                            }
-                        }
-
-                        listener.getLogger().println("Fetching changes from the remote Git repository");
-
-                        boolean fetched = false;
-                        
-                        for (RemoteConfig remoteRepository : paramRepos) {
-                            if (fetchFrom(git,localWorkspace,listener,remoteRepository)) {
-                                fetched = true;
-                            }
-                        }
-
-                        if (!fetched) {
-                            listener.error("Could not fetch from any repository");
-                            throw new GitException("Could not fetch from any repository");
-                        }
-
-                    } else {
-                        
-                        listener.getLogger().println("Cloning the remote Git repository");
-
-                        // Go through the repositories, trying to clone from one
-                        //
-                        boolean successfullyCloned = false;
-                        for(RemoteConfig rc : paramRepos) {
-                            try {
-                                git.clone(rc);
-                                successfullyCloned = true;
-                                break;
-                            }
-                            catch(GitException ex) {
-                                listener.error("Error cloning remote repo '%s' : %s", rc.getName(), ex.getMessage());
-                                if(ex.getCause() != null) {
-                                    listener.error("Cause: %s", ex.getCause().getMessage());
-                                }
-                                // Failed. Try the next one
-                                listener.getLogger().println("Trying next repository");
-                            }
-                        }
-
-                        if(!successfullyCloned) {
-                            listener.error("Could not clone repository");
-                            throw new GitException("Could not clone");
-                        }
-
-                        boolean fetched = false;
-                        
-                        // Also do a fetch
-                        for (RemoteConfig remoteRepository : paramRepos) {
-                            try {
-                                git.fetch(remoteRepository);
-                                fetched = true;
-                            } catch (Exception e) {
-                                listener.error(
-                                               "Problem fetching from " + remoteRepository.getName()
-                                               + " / " + remoteRepository.getName()
-                                               + " - could be unavailable. Continuing anyway");
-                                
-                            } 
-                        }
-
-                        if (!fetched) {
-                            listener.error("Could not fetch from any repository");
-                            throw new GitException("Could not fetch from any repository");
-                        }
-
-                        
-                        if (git.hasGitModules()) {
-                            git.submoduleInit();
-                            git.submoduleUpdate(recursiveSubmodules);
-                        }
-                    }
-
-                    if (parentLastBuiltRev != null)
-                        return parentLastBuiltRev;
-
-                    Collection<Revision> candidates = buildChooser.getCandidateRevisions(
-                            false, singleBranch, git, listener, buildData);
-                    if(candidates.size() == 0)
-                        return null;
-                    return candidates.iterator().next();
+        Revision revToBuild;
+        listener.getLogger().println("Checkout:" + workingDirectory.getName() + " / " + workingDirectory.getRemote() + " - " + workingDirectory.getChannel());
+        IGitAPI git = new GitAPI(gitExe, workingDirectory, listener, environment);
+        
+        if (wipeOutWorkspace) {
+            listener.getLogger().println("Wiping out workspace first");
+            try {
+                workingDirectory.deleteContents();
+            } catch (InterruptedException e) {
+                // I don't really care if this fails.
+            } 
+            
+        }
+        
+        if (git.hasGitRepo()) {
+            // It's an update
+            
+            // Do we want to prune first?
+            if (pruneBranches) {
+                listener.getLogger().println("Pruning obsolete local branches");
+                for (RemoteConfig remoteRepository : paramRepos) {
+                    git.prune(remoteRepository);
                 }
-            });
-
+            }
+            
+            listener.getLogger().println("Fetching changes from the remote Git repository");
+            
+            boolean fetched = false;
+            
+            for (RemoteConfig remoteRepository : paramRepos) {
+                if (fetchFrom(git,workingDirectory,listener,remoteRepository)) {
+                    fetched = true;
+                }
+            }
+            
+            if (!fetched) {
+                listener.error("Could not fetch from any repository");
+                throw new GitException("Could not fetch from any repository");
+            }
+            
+        } else {
+            
+            listener.getLogger().println("Cloning the remote Git repository");
+            
+            // Go through the repositories, trying to clone from one
+            //
+            boolean successfullyCloned = false;
+            for(RemoteConfig rc : paramRepos) {
+                try {
+                    git.clone(rc);
+                    successfullyCloned = true;
+                    break;
+                }
+                catch(GitException ex) {
+                    listener.error("Error cloning remote repo '%s' : %s", rc.getName(), ex.getMessage());
+                    if(ex.getCause() != null) {
+                        listener.error("Cause: %s", ex.getCause().getMessage());
+                    }
+                    // Failed. Try the next one
+                    listener.getLogger().println("Trying next repository");
+                }
+            }
+            
+            if(!successfullyCloned) {
+                listener.error("Could not clone repository");
+                throw new GitException("Could not clone");
+            }
+            
+            boolean fetched = false;
+            
+            // Also do a fetch
+            for (RemoteConfig remoteRepository : paramRepos) {
+                try {
+                    git.fetch(remoteRepository);
+                    fetched = true;
+                } catch (Exception e) {
+                    listener.error(
+                                   "Problem fetching from " + remoteRepository.getName()
+                                   + " / " + remoteRepository.getName()
+                                   + " - could be unavailable. Continuing anyway");
+                    
+                } 
+            }
+            
+            if (!fetched) {
+                listener.error("Could not fetch from any repository");
+                throw new GitException("Could not fetch from any repository");
+            }
+            
+            
+            if (git.hasGitModules()) {
+                git.submoduleInit();
+                git.submoduleUpdate(recursiveSubmodules);
+            }
+        }
+        
+        if (parentLastBuiltRev != null)
+            revToBuild = parentLastBuiltRev;
+        
+        Collection<Revision> candidates = buildChooser.getCandidateRevisions(
+                                                                             false, singleBranch, git, listener, buildData);
+        if(candidates.size() == 0)
+            revToBuild = null;
+        revToBuild = candidates.iterator().next();
 
         if(revToBuild == null) {
             // getBuildCandidates should make the last item the last build, so a re-build
@@ -838,203 +828,183 @@ public class GitSCM extends SCM implements Serializable {
 
         if (mergeOptions.doMerge()) {
             if (!revToBuild.containsBranchName(mergeOptions.getRemoteBranchName())) {
-                returnData = workingDirectory.act(new FileCallable<Object[]>() {
-                        private static final long serialVersionUID = 1L;
-                        public Object[] invoke(File localWorkspace, VirtualChannel channel)
-                        throws IOException {
-                            IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener, environment);
-
-                            // Do we need to merge this revision onto MergeTarget
-
-                            // Only merge if there's a branch to merge that isn't
-                            // us..
-                            listener.getLogger().println(
-                                                         "Merging " + revToBuild + " onto "
-                                                         + mergeOptions.getMergeTarget());
-
-                            // checkout origin/blah
-                            ObjectId target = git.revParse(mergeOptions.getRemoteBranchName());
-
-                            if (localBranch == null || localBranch.length() == 0 || localBranch.equals("")) {
-                                git.checkout(target.name());
-                            }
-                            else {
-                                git.checkoutBranch(localBranch, target.name());
-                            }
-                            
-                            try {
-                                git.merge(revToBuild.getSha1().name());
-                            } catch (Exception ex) {
-                                listener
-                                    .getLogger()
-                                    .println(
-                                             "Branch not suitable for integration as it does not merge cleanly");
-
-                                // We still need to tag something to prevent
-                                // repetitive builds from happening - tag the
-                                // candidate
-                                // branch.
-                                if (localBranch == null || localBranch.length() == 0 || localBranch.equals("")) {
-                                    git.checkout(revToBuild.getSha1().name());
-                                }
-                                else {
-                                    git.checkoutBranch(localBranch, revToBuild.getSha1().name());
-                                }
-                                
-                                git.tag(buildnumber, "Hudson Build #"
-                                         + buildNumber);
-
-
-                                buildData.saveBuild(new Build(revToBuild, buildNumber, Result.FAILURE));
-                                if (getClean()) {
-                                    listener.getLogger().println("Cleaning workspace");
-                                    git.clean();
-
-                                    if (git.hasGitModules()) {
-                                        git.submoduleClean(recursiveSubmodules);
-                                    }
-                                }
-                                
-                                return new Object[]{null, buildData};
-                            }
-
-                            if (git.hasGitModules()) {
-                                git.submoduleUpdate(recursiveSubmodules);
-                            }
-
-                            // Tag the successful merge
-                            git.tag(buildnumber, "Hudson Build #" + buildNumber);
-
-                            StringBuilder changeLog = new StringBuilder();
-
-                            if(revToBuild.getBranches().size() > 0)
-                                listener.getLogger().println("Warning : There are multiple branch changesets here");
-
-                            try {
-
-                                for(Branch b : revToBuild.getBranches()) {
-                                    Build lastRevWas = buildChooser.prevBuildForChangelog(b.getName(), 
-                                                                                          buildData, git);
-                                    if(lastRevWas != null) {
-                                        changeLog.append(putChangelogDiffsIntoFile(git,  b.name, lastRevWas.getSHA1().name(), revToBuild.getSha1().name()));
-                                    }
-                                }
-                            } catch (GitException ge) {
-                                changeLog.append("Unable to retrieve changeset");
-                            }
-
-                            Build build = new Build(revToBuild, buildNumber, null);
-                            buildData.saveBuild(build);
-                            GitUtils gu = new GitUtils(listener,git);
-                            build.mergeRevision = gu.getRevisionForSHA1(target);
-                            if (getClean()) {
-                                listener.getLogger().println("Cleaning workspace");
-                                git.clean();
-                                if (git.hasGitModules()) {
-                                    git.submoduleClean(recursiveSubmodules);
-                                }
-                            }
-
-                            // Fetch the diffs into the changelog file
-                            return new Object[]{changeLog.toString(), buildData};
-                        }
-                    });
-                BuildData returningBuildData = (BuildData)returnData[1];
-                build.addAction(returningBuildData);
-                return changeLogResult((String) returnData[0], changelogFile);
-            }
-        }
-
-        // No merge
-
-        returnData = workingDirectory.act(new FileCallable<Object[]>() {
-                private static final long serialVersionUID = 1L;
-                public Object[] invoke(File localWorkspace, VirtualChannel channel)
-                throws IOException {
-                    IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener, environment);
-
-                    // Straight compile-the-branch
-                    listener.getLogger().println("Checking out " + revToBuild);
+                IGitAPI git = new GitAPI(gitExe, workingDirectory, listener, environment);
+                
+                // Do we need to merge this revision onto MergeTarget
+                
+                // Only merge if there's a branch to merge that isn't
+                // us..
+                listener.getLogger().println(
+                                             "Merging " + revToBuild + " onto "
+                                             + mergeOptions.getMergeTarget());
+                
+                // checkout origin/blah
+                ObjectId target = git.revParse(mergeOptions.getRemoteBranchName());
+                
+                if (localBranch == null || localBranch.length() == 0 || localBranch.equals("")) {
+                    git.checkout(target.name());
+                }
+                else {
+                    git.checkoutBranch(localBranch, target.name());
+                }
+                
+                try {
+                    git.merge(revToBuild.getSha1().name());
+                } catch (Exception ex) {
+                    listener
+                        .getLogger()
+                        .println(
+                                 "Branch not suitable for integration as it does not merge cleanly");
+                    
+                    // We still need to tag something to prevent
+                    // repetitive builds from happening - tag the
+                    // candidate
+                    // branch.
                     if (localBranch == null || localBranch.length() == 0 || localBranch.equals("")) {
                         git.checkout(revToBuild.getSha1().name());
                     }
                     else {
                         git.checkoutBranch(localBranch, revToBuild.getSha1().name());
                     }
-                        
-                    // if(compileSubmoduleCompares)
-                    if (doGenerateSubmoduleConfigurations) {
-                        SubmoduleCombinator combinator = new SubmoduleCombinator(
-                                                                                 git, listener, localWorkspace, submoduleCfg);
-                        combinator.createSubmoduleCombinations();
-                    }
-
-                    if (git.hasGitModules()) {
-                        git.submoduleInit();
-                        git.submoduleSync();
-
-                        // Git submodule update will only 'fetch' from where it
-                        // regards as 'origin'. However,
-                        // it is possible that we are building from a
-                        // RemoteRepository with changes
-                        // that are not in 'origin' AND it may be a new module that
-                        // we've only just discovered.
-                        // So - try updating from all RRs, then use the submodule
-                        // Update to do the checkout
-                        //
-                        // Also, only do this if we're not doing recursive submodules, since that'll
-                        // theoretically be dealt with there anyway.
-                        if (!recursiveSubmodules) {
-                            for (RemoteConfig remoteRepository : paramRepos) {
-                                fetchFrom(git, localWorkspace, listener, remoteRepository);
-                            }
-                        }
-
-                        // Update to the correct checkout
-                        git.submoduleUpdate(recursiveSubmodules);
-
-                    }
-
-                    // Tag the successful merge
-                    git.tag(buildnumber, "Hudson Build #" + buildNumber);
-
-                    StringBuilder changeLog = new StringBuilder();
-
-                    int histories = 0;
-
-                    try {
-	                for(Branch b : revToBuild.getBranches()) {
-                            Build lastRevWas = buildChooser.prevBuildForChangelog(b.getName(), buildData, git);
-
-	                    if(lastRevWas != null) {
-	                        listener.getLogger().println("Recording changes in branch " + b.getName());
-	                        changeLog.append(putChangelogDiffsIntoFile(git, b.name, lastRevWas.getSHA1().name(), revToBuild.getSha1().name()));
-	                        histories++;
-	                    } else {
-	                        listener.getLogger().println("No change to record in branch " + b.getName());
-	                    }
-	                }
-                    } catch (GitException ge) {
-                        changeLog.append("Unable to retrieve changeset");
-                    }
-
-                    if(histories > 1)
-                        listener.getLogger().println("Warning : There are multiple branch changesets here");
-
-
-                    buildData.saveBuild(new Build(revToBuild, buildNumber, null));
-
+                    
+                    git.tag(buildnumber, "Hudson Build #"
+                            + buildNumber);
+                    
+                    
+                    buildData.saveBuild(new Build(revToBuild, buildNumber, Result.FAILURE));
                     if (getClean()) {
                         listener.getLogger().println("Cleaning workspace");
                         git.clean();
+                        
+                        if (git.hasGitModules()) {
+                            git.submoduleClean(recursiveSubmodules);
+                        }
                     }
-
-                    // Fetch the diffs into the changelog file
-                    return new Object[]{changeLog.toString(), buildData};
-
+                    
+                    returnData = new Object[]{null, buildData};
                 }
-            });
+                
+                if (git.hasGitModules()) {
+                    git.submoduleUpdate(recursiveSubmodules);
+                }
+                
+                // Tag the successful merge
+                git.tag(buildnumber, "Hudson Build #" + buildNumber);
+                
+                StringBuilder changeLog = new StringBuilder();
+                
+                if(revToBuild.getBranches().size() > 0)
+                    listener.getLogger().println("Warning : There are multiple branch changesets here");
+                
+                try {
+                    
+                    for(Branch b : revToBuild.getBranches()) {
+                        Build lastRevWas = buildChooser.prevBuildForChangelog(b.getName(), 
+                                                                              buildData, git);
+                        if(lastRevWas != null) {
+                            changeLog.append(putChangelogDiffsIntoFile(git,  b.name, lastRevWas.getSHA1().name(), revToBuild.getSha1().name()));
+                        }
+                    }
+                } catch (GitException ge) {
+                    changeLog.append("Unable to retrieve changeset");
+                }
+                
+                Build build = new Build(revToBuild, buildNumber, null);
+                buildData.saveBuild(build);
+                GitUtils gu = new GitUtils(listener,git);
+                build.mergeRevision = gu.getRevisionForSHA1(target);
+                if (getClean()) {
+                    listener.getLogger().println("Cleaning workspace");
+                    git.clean();
+                    if (git.hasGitModules()) {
+                        git.submoduleClean(recursiveSubmodules);
+                    }
+                }
+                
+                // Fetch the diffs into the changelog file
+                returnData = Object[]{changeLog.toString(), buildData};
+            }
+
+            BuildData returningBuildData = (BuildData)returnData[1];
+            build.addAction(returningBuildData);
+            return changeLogResult((String) returnData[0], changelogFile);
+        }
+    
+    
+        // No merge
+        IGitAPI git = new GitAPI(gitExe, workingDirectory, listener, environment);
         
+        // Straight compile-the-branch
+        listener.getLogger().println("Checking out " + revToBuild);
+        if (localBranch == null || localBranch.length() == 0 || localBranch.equals("")) {
+            git.checkout(revToBuild.getSha1().name());
+        }
+        else {
+            git.checkoutBranch(localBranch, revToBuild.getSha1().name());
+        }
+        
+        if (git.hasGitModules()) {
+            git.submoduleInit();
+            git.submoduleSync();
+            
+            // Git submodule update will only 'fetch' from where it
+            // regards as 'origin'. However,
+            // it is possible that we are building from a
+            // RemoteRepository with changes
+            // that are not in 'origin' AND it may be a new module that
+            // we've only just discovered.
+            // So - try updating from all RRs, then use the submodule
+            // Update to do the checkout
+            //
+            // Also, only do this if we're not doing recursive submodules, since that'll
+            // theoretically be dealt with there anyway.
+            if (!recursiveSubmodules) {
+                for (RemoteConfig remoteRepository : paramRepos) {
+                    fetchFrom(git, workingDirectory, listener, remoteRepository);
+                }
+            }
+            
+            // Update to the correct checkout
+            git.submoduleUpdate(recursiveSubmodules);
+            
+        }
+        
+        // Tag the successful merge
+        git.tag(buildnumber, "Hudson Build #" + buildNumber);
+        
+        StringBuilder changeLog = new StringBuilder();
+        
+        int histories = 0;
+        
+        try {
+            for(Branch b : revToBuild.getBranches()) {
+                Build lastRevWas = buildChooser.prevBuildForChangelog(b.getName(), buildData, git);
+                
+                if(lastRevWas != null) {
+                    listener.getLogger().println("Recording changes in branch " + b.getName());
+                    changeLog.append(putChangelogDiffsIntoFile(git, b.name, lastRevWas.getSHA1().name(), revToBuild.getSha1().name()));
+                    histories++;
+                } else {
+                    listener.getLogger().println("No change to record in branch " + b.getName());
+                }
+            }
+        } catch (GitException ge) {
+            changeLog.append("Unable to retrieve changeset");
+        }
+        
+        if(histories > 1)
+            listener.getLogger().println("Warning : There are multiple branch changesets here");
+        
+        
+        buildData.saveBuild(new Build(revToBuild, buildNumber, null));
+        
+        if (getClean()) {
+            listener.getLogger().println("Cleaning workspace");
+            git.clean();
+        }
+        
+        // Fetch the diffs into the changelog file
+        returnData = new Object[]{changeLog.toString(), buildData};
 
         build.addAction((Action) returnData[1]);
 

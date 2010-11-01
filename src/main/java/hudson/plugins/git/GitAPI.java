@@ -154,20 +154,12 @@ public class GitAPI implements IGitAPI {
         final String source = remoteConfig.getURIs().get(0).toString();
 
         try {
-            workspace.act(new FileCallable<String>() {
-
-                    private static final long serialVersionUID = 1L;
-
-                    public String invoke(File workspace,
-                                         VirtualChannel channel) throws IOException {
-                        final ArgumentListBuilder args = new ArgumentListBuilder();
-                        args.add("clone");
-                        args.add("-o", remoteConfig.getName());
-                        args.add(source);
-                        args.add(workspace.getAbsolutePath());
-                        return launchCommandIn(args, null);
-                    }
-                });
+            final ArgumentListBuilder args = new ArgumentListBuilder();
+            args.add("clone");
+            args.add("-o", remoteConfig.getName());
+            args.add(source);
+            args.add(workspace.getAbsolutePath());
+            launchCommandIn(args, null);
         } catch (Exception e) {
             throw new GitException("Could not clone " + source, e);
         }
