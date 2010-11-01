@@ -18,10 +18,13 @@ import hudson.plugins.git.util.Build;
 
 import hudson.remoting.VirtualChannel;
 import hudson.scm.ChangeLogParser;
+import hudson.scm.PollingResult;
+import hudson.scm.PollingResult.Change;
 import hudson.scm.RepositoryBrowser;
 import hudson.scm.RepositoryBrowsers;
 import hudson.scm.SCM;
 import hudson.scm.SCMDescriptor;
+import hudson.scm.SCMRevisionState;
 import hudson.util.FormValidation;
 
 import java.io.BufferedReader;
@@ -371,11 +374,29 @@ public class GitSCM extends SCM implements Serializable {
         return branch;
     }
 
+    @Override
+    public SCMRevisionState calcRevisionsFromBuild(AbstractBuild<?, ?> build, Launcher launcher, TaskListener listener)
+            throws IOException, InterruptedException {
+        final BuildData buildData = getBuildData(build.getPreviousBuild(), true);
+        final ObjectId o;
+        if (buildData != null) {
+            Revision r = buildData.getLastBuiltRevision();
+            if (r != null) {
+                o = r.getSha1();
+            } else {
+                o = null;
+            }
+        } else {
+            o = null;
+        }
+
+        return new GitRevisionState(o);
+    }
 
     @Override
-    public boolean pollChanges(final AbstractProject project, Launcher launcher,
-                               final FilePath workspace, final TaskListener listener)
-        throws IOException, InterruptedException {
+    public PollingResult compareRemoteRevisionWith(AbstractProject<?, ?> project, Launcher launcher, FilePath workspace,
+                                                   TaskListener listener, SCMRevisionState _baseline) throws IOException, InterruptedException {
+        GitRevisionState baseline = (GitRevisionState)_baseline;
         // Poll for changes. Are there any unbuilt revisions that Hudson ought to build ?
 
         listener.getLogger().println("Using strategy: " + buildChooser.getDisplayName());
@@ -387,7 +408,7 @@ public class GitSCM extends SCM implements Serializable {
         } else {
             // If we've never been built before, well, gotta build!
             listener.getLogger().println("[poll] No previous build, so forcing an initial build.");
-            return true;
+            return new PollingResult(baseline, null, Change.INCOMPARABLE);
         }
 
         final BuildData buildData = fixNull(getBuildData(lastBuild, false));
@@ -408,7 +429,7 @@ public class GitSCM extends SCM implements Serializable {
         if (label != null && label.isSelfLabel()) {
             if(label.getNodes().iterator().next() != project.getLastBuiltOn()) {
                 listener.getLogger().println("Last build was not on tied node, forcing rebuild.");
-                return true;
+                return new PollingResult(baseline, null, Change.INCOMPARABLE);
             }
             gitExe = getGitExe(label.getNodes().iterator().next(), listener);
         } else {
@@ -422,12 +443,12 @@ public class GitSCM extends SCM implements Serializable {
         // Update 9/9/2010 - actually, I think this *was* needed, since we weren't doing a better check
         // for whether we'd ever been built before. But I'm fixing that right now anyway.
         if (!workingDirectory.exists()) {
-            return true;
+            return new PollingResult(baseline, null, Change.INCOMPARABLE);
         }
 
         final EnvVars environment = GitUtils.getPollEnvironment(project, workspace, launcher, listener);
        
-        boolean pollChangesResult;
+        PollingResult pollChangesResult;
 
         IGitAPI git = new GitAPI(gitExe, workingDirectory, listener, environment);
         
@@ -453,10 +474,14 @@ public class GitSCM extends SCM implements Serializable {
                 }
             }
             
-            pollChangesResult = (candidates.size() > 0);
+            if (candidates.size() > 0) {
+                pollChangesResult = new PollingResult(baseline, new GitRevisionState(candidates.iterator().next().getSha1()), Change.SIGNIFICANT);
+            } else {
+                pollChangesResult = new PollingResult(baseline, null, Change.NONE);
+            }
         } else {
             listener.getLogger().println("No Git repository yet, an initial checkout is required");
-            pollChangesResult = true;
+            pollChangesResult = new PollingResult(baseline, null, Change.INCOMPARABLE);
         }
         
         return pollChangesResult;
@@ -1009,7 +1034,8 @@ public class GitSCM extends SCM implements Serializable {
 
     }
 
-    public void buildEnvVars(AbstractBuild build, java.util.Map<String, String> env) {
+    @Override
+    public void buildEnvVars(AbstractBuild<?,?> build, java.util.Map<String, String> env) {
         super.buildEnvVars(build, env);
         String branch = getSingleBranch(build);
         if(branch != null){

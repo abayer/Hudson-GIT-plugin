@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.lang.reflect.Type;
 
 import javax.servlet.RequestDispatcher;
 import javax.servlet.ServletContext;
@@ -127,6 +128,10 @@ public class MockStaplerRequest implements StaplerRequest {
         throw new UnsupportedOperationException();
     }
 
+    public <T> T bindJSON(Type genericType, Class<T> erasure, Object json) {
+        throw new UnsupportedOperationException();
+    }
+
     public void bindJSON(Object bean, JSONObject src) {
         throw new UnsupportedOperationException();
     }
@@ -151,6 +156,10 @@ public class MockStaplerRequest implements StaplerRequest {
         throw new UnsupportedOperationException();
     }
 
+    public boolean isJavaScriptProxyCall() {
+        return false;
+    }
+        
     public <T> List<T> bindParametersToList(Class<T> type, String prefix) {
         throw new UnsupportedOperationException();
     }

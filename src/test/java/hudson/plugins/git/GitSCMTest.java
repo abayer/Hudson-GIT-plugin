@@ -10,6 +10,7 @@ import hudson.model.Node;
 import hudson.model.Result;
 import hudson.model.TaskListener;
 import hudson.model.User;
+import hudson.slaves.DumbSlave;
 import hudson.slaves.EnvironmentVariablesNodeProperty;
 import hudson.slaves.EnvironmentVariablesNodeProperty.Entry;
 import hudson.plugins.git.opt.PreBuildMergeOptions;
@@ -180,7 +181,9 @@ public class GitSCMTest extends HudsonTestCase {
 
     public void testBasicWithSlave() throws Exception {
         FreeStyleProject project = setupSimpleProject("master");
-        project.setAssignedLabel(createSlave(null, null).getSelfLabel());
+        DumbSlave s = createSlave();
+        
+        project.setAssignedLabel(s.getSelfLabel());
 
         // create initial commit and then run the build against it:
         final String commitFile1 = "commitFile1";
@@ -209,7 +212,7 @@ public class GitSCMTest extends HudsonTestCase {
         hudson.setNumExecutors(0);
         hudson.setNodes(hudson.getNodes());
         
-        project.setAssignedLabel(createSlave(null, null).getSelfLabel());
+        project.setAssignedLabel(createSlave("g", null).getSelfLabel());
 
         // create initial commit and then run the build against it:
         final String commitFile1 = "commitFile1";
@@ -316,7 +319,7 @@ public class GitSCMTest extends HudsonTestCase {
     // For HUDSON-7411
     public void testNodeEnvVarsAvailable() throws Exception {
         FreeStyleProject project = setupSimpleProject("master");
-        Node s = createSlave(null,null);
+        Node s = createSlave("h", null);
         setVariables(s, new Entry("TESTKEY", "slaveValue"));
         project.setAssignedLabel(s.getSelfLabel());
         final String commitFile1 = "commitFile1";
@@ -335,7 +338,7 @@ public class GitSCMTest extends HudsonTestCase {
         FreeStyleProject project = setupSimpleProject(mytag);
         final String commitFile1 = "commitFile1";
         commit(commitFile1, johnDoe, "Commit number 1");
-
+        build(project, Result.FAILURE, commitFile1);
         //now create and checkout a new branch:
         final String tmpBranch = "tmp";
         git.branch(tmpBranch);
@@ -344,7 +347,7 @@ public class GitSCMTest extends HudsonTestCase {
         final String commitFile2 = "commitFile2";
         commit(commitFile2, johnDoe, "Commit number 2");
         assertFalse("scm polling should not detect any more changes since mytag is untouched right now", project.pollSCMChanges(listener));
-        build(project, Result.FAILURE, commitFile2);
+        build(project, Result.FAILURE);
 
         // tag it, then delete the tmp branch
         git.tag(mytag, "mytag initial");
@@ -454,7 +457,7 @@ public class GitSCMTest extends HudsonTestCase {
                                                                     File.createTempFile("tmp", "config", hudson.getRootDir())
         );
     }
-
+    
     private FreeStyleBuild build(final FreeStyleProject project, final Result expectedResult, final String...expectedNewlyCommittedFiles) throws Exception {
         final FreeStyleBuild build = project.scheduleBuild2(0, new Cause.UserCause()).get();
         for(final String expectedNewlyCommittedFile : expectedNewlyCommittedFiles) {
