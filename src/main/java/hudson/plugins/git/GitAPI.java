@@ -158,7 +158,7 @@ public class GitAPI implements IGitAPI {
             args.add("clone");
             args.add("-o", remoteConfig.getName());
             args.add(source);
-            args.add(workspace.getAbsolutePath());
+            args.add(workspace.absolutize().getRemote());
             launchCommandIn(args, null);
         } catch (Exception e) {
             throw new GitException("Could not clone " + source, e);

@@ -28,7 +28,7 @@ import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.FileReader;
+import java.io.InputStreamReader;
 import java.io.IOException;
 import java.io.Serializable;
 import java.net.MalformedURLException;
@@ -549,7 +549,7 @@ public class GitSCM extends SCM implements Serializable {
 
     public RemoteConfig getSubmoduleRepository(FilePath aWorkspace, RemoteConfig orig, String name) throws IOException {
         // Read submodule from .gitmodules
-        BufferedReader bfr = new BufferedReader(new InputStreamReader(aWorkspace.child(".gitmodules").read());
+        BufferedReader bfr = new BufferedReader(new InputStreamReader(aWorkspace.child(".gitmodules").read()));
         String line = "";
         boolean isSubmodule = false;
 
@@ -828,8 +828,6 @@ public class GitSCM extends SCM implements Serializable {
 
         if (mergeOptions.doMerge()) {
             if (!revToBuild.containsBranchName(mergeOptions.getRemoteBranchName())) {
-                IGitAPI git = new GitAPI(gitExe, workingDirectory, listener, environment);
-                
                 // Do we need to merge this revision onto MergeTarget
                 
                 // Only merge if there's a branch to merge that isn't
@@ -909,10 +907,10 @@ public class GitSCM extends SCM implements Serializable {
                     changeLog.append("Unable to retrieve changeset");
                 }
                 
-                Build build = new Build(revToBuild, buildNumber, null);
-                buildData.saveBuild(build);
+                Build gitBuild = new Build(revToBuild, buildNumber, null);
+                buildData.saveBuild(gitBuild);
                 GitUtils gu = new GitUtils(listener,git);
-                build.mergeRevision = gu.getRevisionForSHA1(target);
+                gitBuild.mergeRevision = gu.getRevisionForSHA1(target);
                 if (getClean()) {
                     listener.getLogger().println("Cleaning workspace");
                     git.clean();
@@ -922,7 +920,9 @@ public class GitSCM extends SCM implements Serializable {
                 }
                 
                 // Fetch the diffs into the changelog file
-                returnData = Object[]{changeLog.toString(), buildData};
+                returnData = new Object[]{changeLog.toString(), buildData};
+            } else {
+                returnData = new Object[]{null,null};
             }
 
             BuildData returningBuildData = (BuildData)returnData[1];
@@ -931,9 +931,6 @@ public class GitSCM extends SCM implements Serializable {
         }
     
     
-        // No merge
-        IGitAPI git = new GitAPI(gitExe, workingDirectory, listener, environment);
-        
         // Straight compile-the-branch
         listener.getLogger().println("Checking out " + revToBuild);
         if (localBranch == null || localBranch.length() == 0 || localBranch.equals("")) {
